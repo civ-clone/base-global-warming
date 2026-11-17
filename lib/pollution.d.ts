@@ -27,7 +27,10 @@ export declare const discounted: (
   timesCounted: (tile: Tile) => number,
   divisor?: number
 ) => (squares: Tile[]) => number;
-/** How much `squares` count toward warming: the highest `WarmingPollution` answer, or one each when none is registered. */
+/**
+ * How much `squares` count toward warming: the highest `WarmingPollution` answer, or one each when none is registered.
+ *  The highest, not a sum: register one rule, and `replace` it to change it.
+ */
 export declare const warmingPollution: (
   squares: Tile[],
   ruleRegistry?: RuleRegistry

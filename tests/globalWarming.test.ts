@@ -9,7 +9,7 @@ import { aboveLevel, atLevel, stepToward } from '../lib/level';
 import Criterion from '@civ-clone/core-rule/Criterion';
 import Effect from '@civ-clone/core-rule/Effect';
 import Engine from '@civ-clone/core-engine/Engine';
-import { GLOBAL_WARMING_STATE } from '../lib/state';
+import { GLOBAL_WARMING_STATE, setGlobalWarmingState } from '../lib/state';
 import PendingEffect from '@civ-clone/core-pending-effect/PendingEffect';
 import PendingEffectRegistry from '@civ-clone/core-pending-effect/PendingEffectRegistry';
 import RuleRegistry from '@civ-clone/core-rule/RuleRegistry';
@@ -17,6 +17,7 @@ import Terrain from '@civ-clone/core-terrain/Terrain';
 import TerrainChanged from '@civ-clone/core-world/Rules/TerrainChanged';
 import Tile from '@civ-clone/core-world/Tile';
 import TileImprovementRegistry from '@civ-clone/core-tile-improvement/TileImprovementRegistry';
+import Turn from '@civ-clone/core-turn-based-game/Turn';
 import WarmedTerrain from '../Rules/WarmedTerrain';
 import WarmingLevel from '../Rules/WarmingLevel';
 import WarmingPollution from '../Rules/WarmingPollution';
@@ -72,6 +73,13 @@ const toyRules = (events: string[]) => [
 
 const rows = ['~~~~~~~', '~mmmmm~', '~mmmmm~', '~mmmmm~', '~~~~~~~'];
 
+/** An update that ran: `null` would mean it was a turn already done. */
+const ran = (update: GlobalWarmingUpdate | null): GlobalWarmingUpdate => {
+  expect(update).to.not.equal(null);
+
+  return update!;
+};
+
 type Game = {
   world: World;
   engine: Engine;
@@ -79,6 +87,8 @@ type Game = {
   pendingEffectRegistry: PendingEffectRegistry;
   ruleRegistry: RuleRegistry;
   tileImprovementRegistry: TileImprovementRegistry;
+  gameTurn: Turn;
+  /** The next turn's update. */
   turn: () => GlobalWarmingUpdate;
   pollute: (x: number, y: number) => void;
 };
@@ -89,6 +99,7 @@ const newGame = async (): Promise<Game> => {
     engine = new Engine(),
     pendingEffectRegistry = new PendingEffectRegistry(),
     tileImprovementRegistry = new TileImprovementRegistry(),
+    gameTurn = new Turn(),
     world = await drawWorld(rows, ruleRegistry);
 
   ruleRegistry.register(...toyRules(events));
@@ -107,14 +118,21 @@ const newGame = async (): Promise<Game> => {
     pendingEffectRegistry,
     ruleRegistry,
     tileImprovementRegistry,
-    turn: () =>
-      updateGlobalWarming({
-        Pollution,
-        engine,
-        pendingEffectRegistry,
-        ruleRegistry,
-        tileImprovementRegistry,
-      }),
+    gameTurn,
+    turn: (): GlobalWarmingUpdate => {
+      gameTurn.increment();
+
+      return ran(
+        updateGlobalWarming({
+          Pollution,
+          engine,
+          pendingEffectRegistry,
+          ruleRegistry,
+          tileImprovementRegistry,
+          turn: gameTurn,
+        })
+      );
+    },
     pollute: (x: number, y: number) =>
       tileImprovementRegistry.register(
         new Pollution(world.get(x, y), ruleRegistry)
@@ -150,7 +168,11 @@ describe('updateGlobalWarming', (): void => {
         tileImprovementRegistry.register(new Pollution(tile, ruleRegistry))
       );
 
-    for (let turn = 0; turn < 50; turn++) {
+    const turn = new Turn();
+
+    for (let count = 0; count < 50; count++) {
+      turn.increment();
+
       expect(
         updateGlobalWarming({
           Pollution,
@@ -158,6 +180,7 @@ describe('updateGlobalWarming', (): void => {
           pendingEffectRegistry,
           ruleRegistry,
           tileImprovementRegistry,
+          turn,
         })
       ).to.include({ pollution: 15, target: 0, level: 0, warmings: 0 });
     }
@@ -180,7 +203,8 @@ describe('updateGlobalWarming', (): void => {
 
     expect(levels(game, 3)).to.deep.equal(['1/3: 2 0', '1/3: 3 0', '1/3: 3 0']);
 
-    // A second half square makes a whole one: 2, target 6; the level passes 4 with 2 counting, and warns.
+    // A second half square makes a whole one: 2, target 6. The level steps from 3 over 4 to 5, so it is never exactly 4
+    //  and nothing warns.
     game.pollute(4, 3);
 
     expect(levels(game, 1)).to.deep.equal(['2/6: 5 0']);
@@ -254,13 +278,18 @@ describe('updateGlobalWarming', (): void => {
     );
 
     const loaded = new Array(7).fill(0).map((): string => {
-      const { level, warmings, pollution, target } = updateGlobalWarming({
-        Pollution,
-        engine: interrupted.engine,
-        pendingEffectRegistry,
-        ruleRegistry: interrupted.ruleRegistry,
-        tileImprovementRegistry,
-      });
+      interrupted.gameTurn.increment();
+
+      const { level, warmings, pollution, target } = ran(
+        updateGlobalWarming({
+          Pollution,
+          engine: interrupted.engine,
+          pendingEffectRegistry,
+          ruleRegistry: interrupted.ruleRegistry,
+          tileImprovementRegistry,
+          turn: interrupted.gameTurn,
+        })
+      );
 
       return `${pollution}/${target}: ${level} ${warmings}`;
     });
@@ -289,22 +318,167 @@ describe('updateGlobalWarming', (): void => {
     );
     engine.on(GLOBAL_WARMING, (count: number) => warmings.push(count));
 
-    const dependencies = {
-      Pollution,
-      engine,
-      pendingEffectRegistry,
-      ruleRegistry,
-      tileImprovementRegistry,
-    };
+    const turn = new Turn(),
+      dependencies = {
+        Pollution,
+        engine,
+        pendingEffectRegistry,
+        ruleRegistry,
+        tileImprovementRegistry,
+        turn,
+      };
 
-    expect(updateGlobalWarming(dependencies).changed).to.deep.equal([]);
+    expect(ran(updateGlobalWarming(dependencies)).changed).to.deep.equal([]);
     expect(drawn(world)).to.deep.equal(['~m~']);
+
+    turn.increment();
 
     // Every square is asked, the sea too: the rule decides.
     expect(
-      updateGlobalWarming({ ...dependencies, world: () => world }).changed
+      ran(updateGlobalWarming({ ...dependencies, world: () => world })).changed
     ).to.have.length(3);
     expect(drawn(world)).to.deep.equal(['ddd']);
     expect(warmings).to.deep.equal([1, 2]);
+  });
+
+  it('runs once a turn: a second call on the same turn does nothing', async (): Promise<void> => {
+    const game = await newGame();
+
+    game.pollute(2, 1);
+    game.pollute(2, 2);
+
+    expect(levels(game, 1)).to.deep.equal(['2/6: 2 0']);
+
+    // The same turn again, as a rule run for each player would call it.
+    for (let call = 0; call < 3; call++) {
+      expect(
+        updateGlobalWarming({
+          Pollution,
+          engine: game.engine,
+          pendingEffectRegistry: game.pendingEffectRegistry,
+          ruleRegistry: game.ruleRegistry,
+          tileImprovementRegistry: game.tileImprovementRegistry,
+          turn: game.gameTurn,
+        })
+      ).to.equal(null);
+    }
+
+    expect(game.pendingEffectRegistry.entries()[0].data()).to.deep.equal({
+      level: '2',
+      warmings: '0',
+      turn: '1',
+    });
+
+    // The next turn moves again, once: 2 → 4, which warns once.
+    expect(levels(game, 1)).to.deep.equal(['2/6: 4 0']);
+    expect(game.events).to.deep.equal(['warning 4 2']);
+  });
+
+  it('drops its record when the level and warmings go back to 0', async (): Promise<void> => {
+    const game = await newGame();
+
+    game.pollute(2, 2);
+
+    expect(levels(game, 2)).to.deep.equal(['1/3: 2 0', '1/3: 3 0']);
+    expect(game.pendingEffectRegistry.entries()).to.have.length(1);
+
+    game.tileImprovementRegistry.unregister(
+      ...game.tileImprovementRegistry.entries()
+    );
+
+    expect(levels(game, 2)).to.deep.equal(['0/0: 1 0', '0/0: 0 0']);
+    expect(game.pendingEffectRegistry.entries()).to.have.length(0);
+  });
+});
+
+describe('updateGlobalWarming, at the boundaries of a Civilization II-like shape', (): void => {
+  // The shape only, with no game's weighting: the target is twice the polluted squares, the level moves 1 a turn
+  //  between 0 and 99, it warns at exactly 12 with more than 6 squares counting and strikes above 16.
+  const boundary = async (
+    level: number,
+    polluted: number
+  ): Promise<{ update: GlobalWarmingUpdate; events: string[] }> => {
+    const ruleRegistry = new RuleRegistry(),
+      engine = new Engine(),
+      events: string[] = [],
+      pendingEffectRegistry = new PendingEffectRegistry(),
+      tileImprovementRegistry = new TileImprovementRegistry(),
+      turn = new Turn(),
+      world = await drawWorld(['mmmmmmmmmm', '~~~~~~~~~~'], ruleRegistry);
+
+    ruleRegistry.register(
+      new WarmingTarget(new Effect((pollution: number) => 2 * pollution)),
+      new WarmingLevel(new Effect(stepToward(1, 0, 99))),
+      new WarmingWarning(new Effect(atLevel(12, 6))),
+      new WarmingStrike(new Effect(aboveLevel(16))),
+      new WarmedTerrain(
+        new Criterion(
+          (tile: Tile): boolean => tile.terrain() instanceof Meadow
+        ),
+        new Effect(() => Marsh)
+      )
+    );
+    engine.on(GLOBAL_WARMING_WARNING, (level: number, pollution: number) =>
+      events.push(`warning ${level} ${pollution}`)
+    );
+    engine.on(GLOBAL_WARMING, (warmings: number) =>
+      events.push(`warming ${warmings}`)
+    );
+
+    world
+      .entries()
+      .slice(0, polluted)
+      .forEach((tile: Tile) =>
+        tileImprovementRegistry.register(new Pollution(tile, ruleRegistry))
+      );
+
+    setGlobalWarmingState(
+      { level, warmings: 0, turn: null },
+      pendingEffectRegistry
+    );
+    turn.increment();
+
+    return {
+      update: ran(
+        updateGlobalWarming({
+          Pollution,
+          engine,
+          pendingEffectRegistry,
+          ruleRegistry,
+          tileImprovementRegistry,
+          turn,
+        })
+      ),
+      events,
+    };
+  };
+
+  it('warns at level 12 only with more than 6 squares counting', async (): Promise<void> => {
+    const six = await boundary(11, 6),
+      seven = await boundary(11, 7);
+
+    expect(six.update).to.include({ level: 12, warned: false });
+    expect(six.events).to.deep.equal([]);
+    expect(seven.update).to.include({ level: 12, warned: true });
+    expect(seven.events).to.deep.equal(['warning 12 7']);
+  });
+
+  it('strikes when the level passes 16, not at 16', async (): Promise<void> => {
+    const sixteen = await boundary(15, 9),
+      seventeen = await boundary(16, 9);
+
+    expect(sixteen.update).to.include({
+      level: 16,
+      warmings: 0,
+      struck: false,
+    });
+    expect(sixteen.events).to.deep.equal([]);
+    expect(seventeen.update).to.include({
+      level: 0,
+      warmings: 1,
+      struck: true,
+    });
+    expect(seventeen.update.changed).to.have.length(10);
+    expect(seventeen.events).to.deep.equal(['warming 1']);
   });
 });

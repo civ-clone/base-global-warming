@@ -8,15 +8,16 @@ import PendingEffectRegistry from '@civ-clone/core-pending-effect/PendingEffectR
 import { expect } from 'chai';
 
 describe('globalWarmingState', (): void => {
-  it('is 0 and 0 with no record, and saves no record while both are 0', (): void => {
+  it('is level 0, no warmings and no turn with no record, and saves no record while both are 0', (): void => {
     const registry = new PendingEffectRegistry();
 
     expect(globalWarmingState(registry)).to.deep.equal({
       level: 0,
       warmings: 0,
+      turn: null,
     });
 
-    setGlobalWarmingState({ level: 0, warmings: 0 }, registry);
+    setGlobalWarmingState({ level: 0, warmings: 0, turn: 4 }, registry);
 
     expect(registry.entries()).to.have.length(0);
   });
@@ -24,21 +25,47 @@ describe('globalWarmingState', (): void => {
   it('keeps one record, updated in place, as strings', (): void => {
     const registry = new PendingEffectRegistry();
 
-    setGlobalWarmingState({ level: 3, warmings: 0 }, registry);
-    setGlobalWarmingState({ level: 0, warmings: 2 }, registry);
-    setGlobalWarmingState({ level: 0, warmings: 0 }, registry);
-    setGlobalWarmingState({ level: 11, warmings: 2 }, registry);
+    setGlobalWarmingState({ level: 3, warmings: 0, turn: 1 }, registry);
 
-    expect(registry.entries()).to.have.length(1);
-    expect(registry.entries()[0].handler()).to.equal(GLOBAL_WARMING_STATE);
-    expect(registry.entries()[0].target()).to.equal(null);
-    expect(registry.entries()[0].data()).to.deep.equal({
+    const [record] = registry.entries();
+
+    setGlobalWarmingState({ level: 11, warmings: 2, turn: 9 }, registry);
+
+    expect(registry.entries()).to.deep.equal([record]);
+    expect(record.handler()).to.equal(GLOBAL_WARMING_STATE);
+    expect(record.target()).to.equal(null);
+    expect(record.data()).to.deep.equal({
       level: '11',
       warmings: '2',
+      turn: '9',
     });
     expect(globalWarmingState(registry)).to.deep.equal({
       level: 11,
       warmings: 2,
+      turn: 9,
+    });
+  });
+
+  it('drops the record, turn and all, when the level and warmings go back to 0', (): void => {
+    const registry = new PendingEffectRegistry();
+
+    setGlobalWarmingState({ level: 3, warmings: 0, turn: 1 }, registry);
+    setGlobalWarmingState({ level: 0, warmings: 0, turn: 2 }, registry);
+
+    expect(registry.entries()).to.have.length(0);
+    expect(globalWarmingState(registry)).to.deep.equal({
+      level: 0,
+      warmings: 0,
+      turn: null,
+    });
+
+    // After a warming the level is 0 but the warmings aren't: that's kept.
+    setGlobalWarmingState({ level: 0, warmings: 1, turn: 3 }, registry);
+
+    expect(globalWarmingState(registry)).to.deep.equal({
+      level: 0,
+      warmings: 1,
+      turn: 3,
     });
   });
 
@@ -46,7 +73,7 @@ describe('globalWarmingState', (): void => {
     const registry = new PendingEffectRegistry(),
       loaded = new PendingEffectRegistry();
 
-    setGlobalWarmingState({ level: 7, warmings: 1 }, registry);
+    setGlobalWarmingState({ level: 7, warmings: 1, turn: 40 }, registry);
 
     const [record] = registry.entries(),
       saved = JSON.parse(
@@ -58,6 +85,24 @@ describe('globalWarmingState', (): void => {
     expect(globalWarmingState(loaded)).to.deep.equal({
       level: 7,
       warmings: 1,
+      turn: 40,
+    });
+  });
+
+  it('reads a record with no turn as no turn', (): void => {
+    const registry = new PendingEffectRegistry();
+
+    registry.register(
+      new PendingEffect(GLOBAL_WARMING_STATE, null, {
+        level: '5',
+        warmings: '0',
+      })
+    );
+
+    expect(globalWarmingState(registry)).to.deep.equal({
+      level: 5,
+      warmings: 0,
+      turn: null,
     });
   });
 });

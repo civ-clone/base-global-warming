@@ -1,5 +1,8 @@
 import { RuleRegistry } from '@civ-clone/core-rule/RuleRegistry';
-/** This turn's target level: the highest `WarmingTarget` answer, or `fallback` (0) when none is registered. */
+/**
+ * This turn's target level: the highest `WarmingTarget` answer, or `fallback` (0) when none is registered. The highest,
+ *  not a sum: put every term of the target in one rule, and `replace` it to change it.
+ */
 export declare const warmingTarget: (
   pollution: number,
   warmings: number,
@@ -15,7 +18,10 @@ export declare const stepToward: (
   minimum?: number,
   maximum?: number
 ) => (level: number, target: number) => number;
-/** The level after this turn's move: the highest `WarmingLevel` answer, or `stepToward()`'s when none is registered. */
+/**
+ * The level after this turn's move: the highest `WarmingLevel` answer, or `stepToward()`'s when none is registered.
+ *  Register one rule, and `replace` it to change it.
+ */
 export declare const warmingLevel: (
   level: number,
   target: number,

@@ -9,7 +9,7 @@ its own and registers the rules below. With none of them registered, the level s
 
 ## `lib/globalWarming`
 
-`updateGlobalWarming({ Pollution, engine?, pendingEffectRegistry?, ruleRegistry?, tileImprovementRegistry?, world? })`
+`updateGlobalWarming({ Pollution, engine?, pendingEffectRegistry?, ruleRegistry?, tileImprovementRegistry?, turn?, world? })`
 is one turn of warming, for a rule set to call once a turn:
 
 1. the polluted squares are counted (`pollutedSquares`) and weighed (`WarmingPollution`);
@@ -20,7 +20,13 @@ is one turn of warming, for a rule set to call once a turn:
    square of the world is warmed (`warm`, with the warmings before this one) and `world:global-warming`
    (`GLOBAL_WARMING`) is emitted, with the warmings so far and the squares that changed.
 
-The state is saved before anything is emitted. `Pollution` is the rule set's pollution improvement. `world()` gives the
+The state is saved before anything is emitted.
+
+It runs once for each value of `turn` (core-turn-based-game's `Turn`). A call on a turn it has already recorded does
+nothing and returns `null`, so a rule that runs once for each player can't move the level more than once. A turn that
+leaves the level and the warmings both at 0 isn't recorded, because no record is kept then (see `lib/state`). A second
+call that turn starts from 0 again, as the first did, and gives the same answer from the same pollution: from 0, the
+default step reaches 0 only when the target is 0 or less. `Pollution` is the rule set's pollution improvement. `world()` gives the
 world a strike changes; by default it's the world the first polluted square is in. It returns what it saw and did:
 the squares, the pollution, the target, the level, the warmings, whether it warned and struck, and the squares changed.
 
@@ -60,14 +66,23 @@ the squares, the pollution, the target, the level, the warmings, whether it warn
 
 ## `lib/state`
 
-`globalWarmingState(pendingEffectRegistry?)` returns `{ level, warmings }`, which is `{ 0, 0 }` in a game that has none
-yet. `setGlobalWarmingState(state, pendingEffectRegistry?)` writes it, and only `updateGlobalWarming` calls it.
+`globalWarmingState(pendingEffectRegistry?)` returns `{ level, warmings, turn }`: level 0, no warmings and no turn
+(`null`) in a game that has none yet. `turn` is the last turn `updateGlobalWarming` ran on. `setGlobalWarmingState(state, pendingEffectRegistry?)` writes it, and only `updateGlobalWarming` calls it.
 
 The state is one `PendingEffect` record under `GLOBAL_WARMING_STATE` (`base-global-warming:state`), with no target and
 its numbers kept as strings. Nothing discharges it. Pending effects are already saved, so warming needs no saved class
-or registry of its own. A game in which the level and the warmings are both still 0 has no record.
+or registry of its own. A game in which the level and the warmings are both 0 has no record: none is made, and one that goes back to 0 and 0
+is dropped, its turn with it. A game in which nothing has happened, or everything has gone back to the start, saves
+exactly as one that never had warming.
 
 ## Rules
+
+Register one rule for each number. `WarmingPollution`, `WarmingTarget` and `WarmingLevel` take the highest answer, so
+a second rule can't adjust the first. Put every term in one rule (the target's Solar Plant term goes inside the target
+rule), and change a rule set's rule with `RuleRegistry.replace` by its id. `WarmingWarning` and `WarmingStrike` take any
+yes, so a second rule can only add a case, never remove one. `WarmedTerrain` takes the first answer that names a
+terrain, in the registry's order, so a later rule can't override an earlier one: `replace` it or put a rule ahead of it
+with `RuleRegistry.before`.
 
 - `WarmingPollution(squares) → number`: how much the polluted squares count.
 - `WarmingTarget(pollution, warmings) → number`: the level warming moves toward this turn.

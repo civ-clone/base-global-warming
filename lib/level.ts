@@ -7,7 +7,10 @@ import WarmingStrike from '../Rules/WarmingStrike';
 import WarmingTarget from '../Rules/WarmingTarget';
 import WarmingWarning from '../Rules/WarmingWarning';
 
-/** This turn's target level: the highest `WarmingTarget` answer, or `fallback` (0) when none is registered. */
+/**
+ * This turn's target level: the highest `WarmingTarget` answer, or `fallback` (0) when none is registered. The highest,
+ *  not a sum: put every term of the target in one rule, and `replace` it to change it.
+ */
 export const warmingTarget = (
   pollution: number,
   warmings: number,
@@ -38,7 +41,10 @@ export const stepToward =
     return Math.min(maximum, Math.max(minimum, moved));
   };
 
-/** The level after this turn's move: the highest `WarmingLevel` answer, or `stepToward()`'s when none is registered. */
+/**
+ * The level after this turn's move: the highest `WarmingLevel` answer, or `stepToward()`'s when none is registered.
+ *  Register one rule, and `replace` it to change it.
+ */
 export const warmingLevel = (
   level: number,
   target: number,

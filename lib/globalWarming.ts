@@ -17,6 +17,10 @@ import {
 import { globalWarmingState, setGlobalWarmingState } from './state';
 import { pollutedSquares, warmingPollution } from './pollution';
 import { strikes, warmingLevel, warmingTarget, warns } from './level';
+import {
+  Turn,
+  instance as turnInstance,
+} from '@civ-clone/core-turn-based-game/Turn';
 import Tile from '@civ-clone/core-world/Tile';
 import TileImprovement from '@civ-clone/core-tile-improvement/TileImprovement';
 import World from '@civ-clone/core-world/World';
@@ -35,6 +39,8 @@ export type GlobalWarmingDependencies = {
   pendingEffectRegistry?: PendingEffectRegistry;
   ruleRegistry?: RuleRegistry;
   tileImprovementRegistry?: TileImprovementRegistry;
+  /** The game's turn: an update runs once for each of its values. */
+  turn?: Turn;
   /** The world a warming changes; by default the world the first polluted square is in, or none. */
   world?: () => World | null;
 };
@@ -57,7 +63,7 @@ export type GlobalWarmingUpdate = {
 };
 
 /**
- * A turn of global warming, for a rule set to call once a turn from a rule of its own:
+ * A turn of global warming, for a rule set to call from a rule of its own, once a turn:
  *
  * 1. the polluted squares are counted (`lib/pollution`) and weighed (`WarmingPollution`);
  * 2. the saved level moves toward this turn's target (`WarmingTarget`, `WarmingLevel`);
@@ -66,8 +72,14 @@ export type GlobalWarmingUpdate = {
  *    square of the world is warmed (`lib/warm`, with the warmings before this one) and `world:global-warming` is
  *    emitted.
  *
- * The level and warmings are saved (`lib/state`) before anything is emitted. With no rules registered, the target is 0,
- *  the level stays 0, nothing warns or strikes and nothing is saved.
+ * The level, the warmings and the turn are saved (`lib/state`) before anything is emitted. With no rules registered, the
+ *  target is 0, the level stays 0, nothing warns or strikes and nothing is saved.
+ *
+ * **Once a turn:** a call on a turn already recorded does nothing and returns `null`, so a rule that runs for each
+ *  player can't move the level more than once. The turn is kept with the level and warmings, so a turn that leaves both
+ *  at 0 isn't recorded (`lib/state` keeps no record then). A second call that turn starts from 0 again, as the first did,
+ *  and gives the same answer from the same pollution: from 0, the default step reaches 0 only when the target is 0 or
+ *  less.
  */
 export const updateGlobalWarming = ({
   Pollution,
@@ -75,10 +87,17 @@ export const updateGlobalWarming = ({
   pendingEffectRegistry = pendingEffectRegistryInstance,
   ruleRegistry = ruleRegistryInstance,
   tileImprovementRegistry = tileImprovementRegistryInstance,
+  turn = turnInstance,
   world,
-}: GlobalWarmingDependencies): GlobalWarmingUpdate => {
+}: GlobalWarmingDependencies): GlobalWarmingUpdate | null => {
+  const before = globalWarmingState(pendingEffectRegistry),
+    now = turn.value();
+
+  if (before.turn === now) {
+    return null;
+  }
+
   const squares = pollutedSquares(Pollution, tileImprovementRegistry),
-    before = globalWarmingState(pendingEffectRegistry),
     pollution = warmingPollution(squares, ruleRegistry),
     target = warmingTarget(pollution, before.warmings, ruleRegistry),
     moved = warmingLevel(before.level, target, ruleRegistry),
@@ -87,7 +106,7 @@ export const updateGlobalWarming = ({
     level = struck ? 0 : moved,
     warmings = struck ? before.warmings + 1 : before.warmings;
 
-  setGlobalWarmingState({ level, warmings }, pendingEffectRegistry);
+  setGlobalWarmingState({ level, warmings, turn: now }, pendingEffectRegistry);
 
   if (warned) {
     engine.emit(GLOBAL_WARMING_WARNING, moved, pollution);
